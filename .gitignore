@@ -1,0 +1,7 @@
+# Generated firmware and build files
+build/
+build-*/
+build_*/
+
+# macOS metadata
+.DS_Store
