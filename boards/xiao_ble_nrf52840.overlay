@@ -1,9 +1,40 @@
 #include <zephyr/dt-bindings/adc/adc.h>
 #include <zephyr/dt-bindings/adc/nrf-saadc.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
 
 / {
 	zephyr,user {
-		io-channels = <&adc 0>;
+		io-channels = <&adc 0>, <&ads1115 0>;
+		io-channel-names = "divider", "vin";
+	};
+};
+
+&i2c1 {
+	status = "okay";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
+
+	ads1115: adc@48 {
+		compatible = "ti,ads1115";
+		reg = <0x48>;
+		#io-channel-cells = <1>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		channel@0 {
+			reg = <0>;
+			zephyr,gain = "ADC_GAIN_8";
+			zephyr,reference = "ADC_REF_INTERNAL";
+			zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+			zephyr,input-positive = <0>;
+			/* Single-ended ADS1115 uses 15 positive bits, +/-256 mV range. */
+			zephyr,resolution = <15>;
+		};
+	};
+
+	sht40: sht40@44 {
+		compatible = "sensirion,sht4x";
+		reg = <0x44>;
+		repeatability = <2>;
 	};
 };
 

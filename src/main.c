@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include <stdio.h>
+#include <errno.h>
+#include <math.h>
 #include <zephyr/drivers/adc.h>
+#include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 
@@ -23,6 +26,63 @@ static const double CAL_ADC = 0.0;
 
 static const struct adc_dt_spec adc_input =
 	ADC_DT_SPEC_GET(DT_PATH(zephyr_user));
+static const struct adc_dt_spec vin_input =
+	ADC_DT_SPEC_GET_BY_NAME(DT_PATH(zephyr_user), vin);
+static const struct device *const sht40 = DEVICE_DT_GET(DT_NODELABEL(sht40));
+
+static int read_vin(double *raw, double *millivolts)
+{
+	int16_t sample;
+	struct adc_sequence sequence = {
+		.buffer = &sample,
+		.buffer_size = sizeof(sample),
+	};
+	int ret = adc_sequence_init_dt(&vin_input, &sequence);
+
+	if (ret < 0) {
+		return ret;
+	}
+	ret = adc_read_dt(&vin_input, &sequence);
+	if (ret < 0) {
+		return ret;
+	}
+
+	int32_t microvolts = sample;
+
+	ret = adc_raw_to_microvolts_dt(&vin_input, &microvolts);
+	if (ret < 0) {
+		return ret;
+	}
+	/* A full-scale code cannot distinguish 256 mV from overrange. */
+	if (sample == INT16_MAX) {
+		return -ERANGE;
+	}
+	*raw = sample;
+	*millivolts = microvolts / 1000.0;
+	return 0;
+}
+
+static int read_environment(double *temperature, double *humidity)
+{
+	struct sensor_value temp;
+	struct sensor_value rh;
+	int ret = sensor_sample_fetch(sht40);
+
+	if (ret < 0) {
+		return ret;
+	}
+	ret = sensor_channel_get(sht40, SENSOR_CHAN_AMBIENT_TEMP, &temp);
+	if (ret < 0) {
+		return ret;
+	}
+	ret = sensor_channel_get(sht40, SENSOR_CHAN_HUMIDITY, &rh);
+	if (ret < 0) {
+		return ret;
+	}
+	*temperature = sensor_value_to_double(&temp);
+	*humidity = sensor_value_to_double(&rh);
+	return 0;
+}
 
 static int read_adc(double *raw_average, double *pin_voltage)
 {
@@ -82,30 +142,51 @@ int main(void)
 		printf("# ADC setup failed: %d\n", ret);
 		return 0;
 	}
+	int ads_setup_status = adc_is_ready_dt(&vin_input) ?
+		adc_channel_setup_dt(&vin_input) : -ENODEV;
+	int sht_setup_status = device_is_ready(sht40) ? 0 : -ENODEV;
 
 	printf("# D0/A0 voltage test; VOUT uses the 1M/330k divider.\n");
+	printf("# ADS1115 A0: VIN, address 0x48, range 0..256 mV; SHT40: 0x44.\n");
+	printf("# Startup status: ADS=%d, SHT=%d (0=ready).\n",
+	       ads_setup_status, sht_setup_status);
 	printf("# VOUT calibration: %s\n",
 	       CAL_ADC > 0.0 && CAL_VOLTAGE > 0.0 ? "enabled" : "not yet calibrated");
-	printf("time_s,adc_raw,d0_voltage_V,vout_voltage_V\n");
+	printf("time_s,adc_raw,d0_voltage_V,vout_voltage_V,vin_adc_raw,vin_mV,"
+	       "temperature_C,humidity_pct,adc_status,ads_status,sht_status\n");
 
 	while (1) {
-		double adc_raw;
-		double d0_voltage;
+		double adc_raw = NAN;
+		double d0_voltage = NAN;
+		double vout_voltage = NAN;
+		double vin_raw = NAN;
+		double vin_mv = NAN;
+		double temperature = NAN;
+		double humidity = NAN;
 
-		ret = read_adc(&adc_raw, &d0_voltage);
-		if (ret < 0) {
-			printf("# ADC read failed: %d\n", ret);
-		} else {
-			double vout_voltage = d0_voltage *
+		int adc_status = read_adc(&adc_raw, &d0_voltage);
+
+		if (adc_status == 0) {
+			vout_voltage = d0_voltage *
 				(R_TOP_OHM + R_BOTTOM_OHM) / R_BOTTOM_OHM;
 
 			if (CAL_ADC > 0.0 && CAL_VOLTAGE > 0.0) {
 				vout_voltage = adc_raw * CAL_VOLTAGE / CAL_ADC;
 			}
-
-			printf("%.3f,%.1f,%.4f,%.4f\n",
-			       k_uptime_get() / 1000.0, adc_raw, d0_voltage, vout_voltage);
 		}
+		int ads_status = ads_setup_status;
+		int sht_status = sht_setup_status;
+
+		if (ads_status == 0) {
+			ads_status = read_vin(&vin_raw, &vin_mv);
+		}
+		if (sht_status == 0) {
+			sht_status = read_environment(&temperature, &humidity);
+		}
+		printf("%.3f,%.1f,%.4f,%.4f,%.0f,%.3f,%.2f,%.2f,%d,%d,%d\n",
+		       k_uptime_get() / 1000.0, adc_raw, d0_voltage, vout_voltage,
+		       vin_raw, vin_mv, temperature, humidity,
+		       adc_status, ads_status, sht_status);
 
 		/* The interval starts after sampling and USB output finish. */
 		k_msleep(ADC_TEST_INTERVAL_MS);
