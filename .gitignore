@@ -5,3 +5,16 @@ build_*/
 
 # macOS metadata
 .DS_Store
+
+# Local agent instructions and private work files
+AGENTS.md
+AGENTS.override.md
+.codex/
+.agent/
+agent-notes/
+reviews/
+*.agent.md
+*.review.md
+agent-*.md
+review-*.md
+*.log

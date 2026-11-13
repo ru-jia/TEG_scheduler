@@ -9,19 +9,17 @@
 static const double R_TOP_OHM = 1000000.0;
 static const double R_BOTTOM_OHM = 330000.0;
 
-/*
- * Optional end-to-end calibration. Leave both at zero initially.
- * At a stable output, measure VOUT-to-GND with a multimeter and record
- * adc_raw from the same operating point. Put that pair here and rebuild.
- * CAL_VOLTAGE is VOUT, in volts; CAL_ADC is the averaged raw ADC count.
- * This calibration already includes the resistor divider ratio.
- */
+/* Calibration pair: multimeter VOUT (V) and simultaneous adc_raw.
+ * Both zero: use the nominal divider ratio instead. */
 static const double CAL_VOLTAGE = 0.0;
 static const double CAL_ADC = 0.0;
 
 #define SAMPLES 20
 #define SAMPLE_SPACING_MS 5
-#define INTERVAL_MS 1000
+#define ADC_TEST_INTERVAL_MS 1000
+
+/* Initial BLE interval after calibration; not used by this ADC test. */
+#define INITIAL_TX_INTERVAL_MS (300 * 1000)
 
 static const struct adc_dt_spec adc_input =
 	ADC_DT_SPEC_GET(DT_PATH(zephyr_user));
@@ -46,7 +44,6 @@ static int read_adc(double *raw_average, double *pin_voltage)
 		if (ret < 0) {
 			return ret;
 		}
-
 		raw_total += sample;
 		int32_t microvolts = sample;
 
@@ -110,8 +107,8 @@ int main(void)
 			       k_uptime_get() / 1000.0, adc_raw, d0_voltage, vout_voltage);
 		}
 
-		/* As in the original sketch, wait after each averaged reading. */
-		k_msleep(INTERVAL_MS);
+		/* The interval starts after sampling and USB output finish. */
+		k_msleep(ADC_TEST_INTERVAL_MS);
 	}
 	return 0;
 }
