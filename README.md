@@ -1,6 +1,6 @@
 # TEG scheduler
 
-XIAO nRF52840 firmware on nRF Connect SDK 3.3.4 / Zephyr. Reads D0 voltage,
+XIAO nRF52840 firmware on nRF Connect SDK 3.3.4 / Zephyr. Reads D0 VSTORE and D1 VOUT,
 ADS1115 VIN, and SHT40 temperature/humidity; sends CSV over USB and BLE.
 USB readings and phone BLE notifications work. Voltage calibration and
 energy-aware scheduling are pending; direct TEG/LTC power could not start XIAO.
@@ -11,28 +11,60 @@ Use USB power for XIAO and share ground with LTC and both sensors.
 
 | Connection | Wiring |
 | --- | --- |
-| VOUT measurement | `VOUT -> 1 Mohm -> D0/A0 -> 330 kohm -> GND` |
+| VSTORE measurement | `VSTORE -> 1 Mohm -> D0/A0 -> 330 kohm -> GND` |
+| VOUT measurement | `VOUT -> 1 Mohm -> D1/A1 -> 330 kohm -> GND` |
 | Sensor power | XIAO 3V3 to ADS1115 VDD and SHT40 VIN |
 | I2C | Both SDA to D4; both SCL to D5 |
 | ADS1115 | ADDR to GND (`0x48`); A0 to LTC VIN/TEG positive |
 | SHT40 | Address `0x44` |
 
 ADS1115 reads A0 against GND in single-shot mode. Keep its input positive
-and below the configured 256 mV full scale. D0 measures VOUT, not VSTORE.
+and below the configured 256 mV full scale. D0 measures VSTORE; D1 measures VOUT. Do not join the divider midpoints.
+The 0.1 F storage capacitor stays between VSTORE and GND. For a 5 V
+LTC3108 output, connect both VS1 and VS2 to VAUX, not XIAO 3V3.
 
 ## Readings and calibration
 
-Measurements and BLE start at boot. Each cycle averages 20 D0 samples,
-reads both sensors, then waits 1 second. Opening USB serial at 115200 baud
-prints the header and continuous CSV:
+Each cycle averages 20 samples per
+XIAO channel and reads both sensors. The first conversion after selecting each
+channel is discarded. Cycles target 1 second including acquisition; slow reads
+or BLE output can extend this. Channels are read sequentially, not simultaneously.
+The timestamp is board uptime at the start of acquisition, not experiment time zero.
+Opening USB serial at 115200 baud prints the header and continuous CSV:
 
 ```text
-time_s,adc_raw,d0_voltage_V,vout_voltage_V,vin_adc_raw,vin_mV,temperature_C,humidity_pct,adc_status,ads_status,sht_status
+time_s,vst_adc_raw,d0_voltage_V,vst_voltage_V,vout_adc_raw,d1_voltage_V,vout_voltage_V,vin_adc_raw,vin_mV,temperature_C,humidity_pct,vst_status,vout_status,ads_status,sht_status
 ```
 
-In `src/main.c`, set `CAL_VOLTAGE` to multimeter VOUT and `CAL_ADC` to the
-simultaneous averaged raw ADC reading. Leaving both zero uses the nominal
-divider ratio. Voltage trends have been checked; accuracy is not yet calibrated.
+The nominal voltage multiplier is 1.33 / 0.33 (about 4.03030). In `src/main.c`,
+set each independent `VST_CAL_*` or `VOUT_CAL_*` pair to multimeter volts and
+its matching averaged raw ADC code. Zero pairs use the nominal ratio. Validate
+both channels against a multimeter before collecting experimental data.
+
+The divider's source resistance is about 248 kohm (1 Mohm parallel with
+330 kohm). Both channels use 40 us acquisition, within the nRF52840's
+800 kohm source-resistance limit at that setting. No additional ADC filter
+capacitors are required for this configuration. The 0.1 F storage capacitor
+remains on VSTORE. Compare settled readings at multiple voltages against a
+multimeter; resistor tolerance, input leakage and breadboard wiring can still
+cause errors. At 5 V, each divider draws about 3.76 uA (18.8 uW), which loads
+the harvested supply and reduces its measured net charging rate.
+
+### Save USB data
+
+Install `pyserial` in your Python environment, then close other serial monitors.
+Run from this project directory, choosing an output location inside the TEG
+workspace and a new file for each trial:
+
+```sh
+python3 tools/capture_csv.py --list
+python3 tools/capture_csv.py /dev/cu.usbmodemXXXX /absolute/path/inside/TEG/C1_trial1.csv --duration 600
+```
+
+Omit `--duration` to record until Ctrl-C. The script excludes comment lines,
+flushes each row to disk and refuses to overwrite an existing file. `nan` values
+and device error statuses remain in the CSV. Record the actual thermal stimulus
+start time separately and subtract its board-uptime timestamp during analysis.
 
 Status: `0` = success, `-19` = device unavailable at startup,
 `-34` = ADS1115 full scale. Failed values appear as `nan`.
