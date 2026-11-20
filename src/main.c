@@ -21,10 +21,11 @@ static const double R_BOTTOM_OHM = 330000.0;
 static const double VST_CAL_GAIN_V_PER_COUNT = 0.0034887633525722997;
 static const double VST_CAL_OFFSET_V = 0.0575123479938878;
 
-/* VOUT one-point calibration: multimeter volts and matching averaged D0 code.
+/* VOUT one-point estimate at the 5 V setting: repeated bench voltage and
+ * median raw D0 count from the charging run, measured separately.
  * Leave both at zero to use the nominal divider ratio. */
-static const double VOUT_CAL_VOLTAGE = 0.0;
-static const double VOUT_CAL_ADC = 0.0;
+static const double VOUT_CAL_VOLTAGE = 5.07;
+static const double VOUT_CAL_ADC = 1411.2;
 
 #define SAMPLES 20
 #define SAMPLE_SPACING_MS 5
