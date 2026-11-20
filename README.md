@@ -53,14 +53,16 @@ the harvested supply and reduces its measured net charging rate.
 ### Save USB data
 
 Install `pyserial` in your Python environment, then close other serial monitors.
-Run from this project directory, choosing an output location inside the TEG
-workspace and a new file for each trial:
+Run from this project directory:
 
 ```sh
 python3 tools/capture_csv.py --list
-python3 tools/capture_csv.py /dev/cu.usbmodemXXXX /absolute/path/inside/TEG/C1_trial1.csv --duration 600
+python3 tools/capture_csv.py /dev/cu.usbmodemXXXX --duration 600
 ```
 
+By default, the script creates a timestamped CSV under
+`261119_energyBudgetModeler/261119_capCharging` in the TEG workspace. Pass an
+explicit CSV path after the serial port to override the default.
 Omit `--duration` to record until Ctrl-C. The script excludes comment lines,
 flushes each row to disk and refuses to overwrite an existing file. `nan` values
 and device error statuses remain in the CSV. For capacitor charging, start

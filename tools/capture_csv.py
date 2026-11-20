@@ -5,13 +5,22 @@ import argparse
 import csv
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
+
+
+DEFAULT_OUTPUT_DIR = (
+    Path(__file__).resolve().parents[3]
+    / "261119_energyBudgetModeler"
+    / "261119_capCharging"
+)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("port", nargs="?", help="USB serial device")
-    parser.add_argument("output", nargs="?", type=Path, help="New CSV file")
+    parser.add_argument("output", nargs="?", type=Path,
+                        help=f"New CSV file (default: timestamped file in {DEFAULT_OUTPUT_DIR})")
     parser.add_argument("--list", action="store_true", help="List serial devices")
     parser.add_argument("--duration", type=float, default=0,
                         help="Seconds after opening port; 0 means until Ctrl-C")
@@ -27,18 +36,22 @@ def main():
         for port in list_ports.comports():
             print(f"{port.device}: {port.description}")
         return
-    if not args.port or not args.output:
-        parser.error("port and output are required unless --list is used")
+    if not args.port:
+        parser.error("port is required unless --list is used")
+    output_path = args.output
+    if output_path is None:
+        DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = DEFAULT_OUTPUT_DIR / f"VST_charge_{datetime.now():%Y%m%d_%H%M%S}.csv"
     count = 0
     header = None
     started = time.monotonic()
     # Exclusive creation prevents accidental replacement of an earlier trial.
-    with args.output.open("x", newline="") as output:
+    with output_path.open("x", newline="") as output:
         writer = csv.writer(output)
         try:
             with serial.Serial(args.port, 115200, timeout=1, exclusive=True) as device:
                 device.dtr = True
-                print("Recording; Ctrl-C stops and preserves the CSV.", file=sys.stderr)
+                print(f"Recording to {output_path}. Press Ctrl-C to stop.", file=sys.stderr)
                 while not args.duration or time.monotonic() - started < args.duration:
                     line = device.readline().decode("ascii", errors="replace").strip()
                     if not line or line.startswith("#"):
@@ -66,7 +79,7 @@ def main():
                     count += 1
         except KeyboardInterrupt:
             pass
-    print(f"Saved {count} rows to {args.output}", file=sys.stderr)
+    print(f"Saved {count} rows to {output_path}", file=sys.stderr)
     if count == 0:
         raise SystemExit("No measurements received; check firmware, port and USB connection")
 
