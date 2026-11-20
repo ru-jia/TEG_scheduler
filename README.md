@@ -1,6 +1,6 @@
 # TEG scheduler
 
-XIAO nRF52840 firmware on nRF Connect SDK 3.3.4 / Zephyr. Reads D0 VSTORE and D1 VOUT,
+XIAO nRF52840 firmware on nRF Connect SDK 3.3.4 / Zephyr. Reads D0 VOUT and D1 VSTORE,
 ADS1115 VIN, and SHT40 temperature/humidity; sends CSV over USB and BLE.
 USB readings and phone BLE notifications work. Voltage calibration and
 energy-aware scheduling are pending; direct TEG/LTC power could not start XIAO.
@@ -11,15 +11,15 @@ Use USB power for XIAO and share ground with LTC and both sensors.
 
 | Connection | Wiring |
 | --- | --- |
-| VSTORE measurement | `VSTORE -> 1 Mohm -> D0/A0 -> 330 kohm -> GND` |
-| VOUT measurement | `VOUT -> 1 Mohm -> D1/A1 -> 330 kohm -> GND` |
+| VSTORE measurement | `VSTORE -> 1 Mohm -> D1/A1 -> 330 kohm -> GND` |
+| VOUT measurement | `VOUT -> 1 Mohm -> D0/A0 -> 330 kohm -> GND` |
 | Sensor power | XIAO 3V3 to ADS1115 VDD and SHT40 VIN |
 | I2C | Both SDA to D4; both SCL to D5 |
 | ADS1115 | ADDR to GND (`0x48`); A0 to LTC VIN/TEG positive |
 | SHT40 | Address `0x44` |
 
 ADS1115 reads A0 against GND in single-shot mode. Keep its input positive
-and below the configured 256 mV full scale. D0 measures VSTORE; D1 measures VOUT. Do not join the divider midpoints.
+and below the configured 256 mV full scale. D0 measures VOUT and D1 measures VSTORE. Do not join the divider midpoints.
 The 0.1 F storage capacitor stays between VSTORE and GND. For a 5 V
 LTC3108 output, connect both VS1 and VS2 to VAUX, not XIAO 3V3.
 
@@ -33,7 +33,7 @@ The timestamp is board uptime at the start of acquisition, not experiment time z
 Opening USB serial at 115200 baud prints the header and continuous CSV:
 
 ```text
-time_s,vst_adc_raw,d0_voltage_V,vst_voltage_V,vout_adc_raw,d1_voltage_V,vout_voltage_V,vin_adc_raw,vin_mV,temperature_C,humidity_pct,vst_status,vout_status,ads_status,sht_status
+time_s,vst_adc_raw,d1_voltage_V,vst_voltage_V,vout_adc_raw,d0_voltage_V,vout_voltage_V,vin_adc_raw,vin_mV,temperature_C,humidity_pct,vst_status,vout_status,ads_status,sht_status
 ```
 
 The nominal voltage multiplier is 1.33 / 0.33 (about 4.03030). In `src/main.c`,
@@ -63,8 +63,11 @@ python3 tools/capture_csv.py /dev/cu.usbmodemXXXX /absolute/path/inside/TEG/C1_t
 
 Omit `--duration` to record until Ctrl-C. The script excludes comment lines,
 flushes each row to disk and refuses to overwrite an existing file. `nan` values
-and device error statuses remain in the CSV. Record the actual thermal stimulus
-start time separately and subtract its board-uptime timestamp during analysis.
+and device error statuses remain in the CSV. For capacitor charging, start
+capture before applying the thermal stimulus. Plot `vst_voltage_V` against
+`time_s` for rows with `vst_status = 0`. Subtract the board uptime at stimulus
+onset to set the experiment time origin. The slope over a selected interval
+is the change in VSTORE divided by elapsed time.
 
 Status: `0` = success, `-19` = device unavailable at startup,
 `-34` = ADS1115 full scale. Failed values appear as `nan`.

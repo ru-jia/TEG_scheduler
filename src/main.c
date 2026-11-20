@@ -12,7 +12,7 @@
 
 /* Each input: source -- 1 Mohm -- ADC -- 330 kohm -- GND.
  * No external ADC filter capacitor is required for this divider at 40 us.
- * D0/A0 measures VSTORE; D1/A1 measures VOUT. */
+ * D0/A0 measures VOUT; D1/A1 measures VSTORE. */
 static const double R_TOP_OHM = 1000000.0;
 static const double R_BOTTOM_OHM = 330000.0;
 
@@ -32,8 +32,8 @@ static const double VOUT_CAL_ADC = 0.0;
 #define INITIAL_TX_INTERVAL_MS (300 * 1000)
 
 static const char csv_header[] =
-	"time_s,vst_adc_raw,d0_voltage_V,vst_voltage_V,"
-	"vout_adc_raw,d1_voltage_V,vout_voltage_V,vin_adc_raw,vin_mV,"
+	"time_s,vst_adc_raw,d1_voltage_V,vst_voltage_V,"
+	"vout_adc_raw,d0_voltage_V,vout_voltage_V,vin_adc_raw,vin_mV,"
 	"temperature_C,humidity_pct,vst_status,vout_status,ads_status,sht_status\n";
 
 static const struct adc_dt_spec vst_input =
@@ -174,7 +174,7 @@ int main(void)
 	int64_t next_ble_time = 0;
 	bool usb_was_open = false;
 
-	printf("# D0=VSTORE, D1=VOUT; each uses 1M/330k; no external ADC filter capacitor.\n");
+	printf("# D0=VOUT, D1=VSTORE; each uses 1M/330k; no external ADC filter capacitor.\n");
 	printf("# ADS1115 A0: VIN, address 0x48, range 0..256 mV; SHT40: 0x44.\n");
 	printf("# Startup status: ADS=%d, SHT=%d (0=ready).\n",
 	       ads_setup_status, sht_setup_status);
@@ -191,19 +191,19 @@ int main(void)
 		}
 		usb_was_open = dtr != 0;
 
-		double vst_raw = NAN, d0_voltage = NAN, vst_voltage = NAN;
-		double vout_raw = NAN, d1_voltage = NAN, vout_voltage = NAN;
+		double vst_raw = NAN, vst_pin_voltage = NAN, vst_voltage = NAN;
+		double vout_raw = NAN, vout_pin_voltage = NAN, vout_voltage = NAN;
 		double vin_raw = NAN, vin_mv = NAN;
 		double temperature = NAN, humidity = NAN;
-		int vst_status = read_adc(&vst_input, &vst_raw, &d0_voltage);
-		int vout_status = read_adc(&vout_input, &vout_raw, &d1_voltage);
+		int vst_status = read_adc(&vst_input, &vst_raw, &vst_pin_voltage);
+		int vout_status = read_adc(&vout_input, &vout_raw, &vout_pin_voltage);
 
 		if (vst_status == 0) {
-			vst_voltage = source_voltage(vst_raw, d0_voltage,
+			vst_voltage = source_voltage(vst_raw, vst_pin_voltage,
 				VST_CAL_VOLTAGE, VST_CAL_ADC);
 		}
 		if (vout_status == 0) {
-			vout_voltage = source_voltage(vout_raw, d1_voltage,
+			vout_voltage = source_voltage(vout_raw, vout_pin_voltage,
 				VOUT_CAL_VOLTAGE, VOUT_CAL_ADC);
 		}
 		int ads_status = ads_setup_status;
@@ -218,8 +218,8 @@ int main(void)
 		char line[256];
 		int length = snprintf(line, sizeof(line),
 		       "%.3f,%.1f,%.4f,%.4f,%.1f,%.4f,%.4f,%.0f,%.3f,%.2f,%.2f,%d,%d,%d,%d\n",
-		       cycle_start / 1000.0, vst_raw, d0_voltage, vst_voltage,
-		       vout_raw, d1_voltage, vout_voltage, vin_raw, vin_mv,
+			       cycle_start / 1000.0, vst_raw, vst_pin_voltage, vst_voltage,
+			       vout_raw, vout_pin_voltage, vout_voltage, vin_raw, vin_mv,
 		       temperature, humidity, vst_status, vout_status, ads_status, sht_status);
 
 		if (length < 0 || length >= sizeof(line)) {
