@@ -16,10 +16,13 @@
 static const double R_TOP_OHM = 1000000.0;
 static const double R_BOTTOM_OHM = 330000.0;
 
-/* Independent calibration pairs: multimeter volts and averaged raw code.
- * Leave a pair at zero to use the nominal divider ratio. */
-static const double VST_CAL_VOLTAGE = 0.0;
-static const double VST_CAL_ADC = 0.0;
+/* VSTORE fit against the multimeter over 0.535 to 1.162 V.
+ * The gain and offset map averaged D1 ADC counts directly to source volts. */
+static const double VST_CAL_GAIN_V_PER_COUNT = 0.0034887633525722997;
+static const double VST_CAL_OFFSET_V = 0.0575123479938878;
+
+/* VOUT one-point calibration: multimeter volts and matching averaged D0 code.
+ * Leave both at zero to use the nominal divider ratio. */
 static const double VOUT_CAL_VOLTAGE = 0.0;
 static const double VOUT_CAL_ADC = 0.0;
 
@@ -187,6 +190,8 @@ int main(void)
 		if (dtr && !usb_was_open) {
 			printf("# BLE TEG_XIAO: startup status=%d; interval=%d ms.\n",
 			       ble_status, BLE_TEST_INTERVAL_MS);
+			printf("# VST calibration: raw * %.9f + %.6f V. Reference range: 0.535-1.162 V.\n",
+			       VST_CAL_GAIN_V_PER_COUNT, VST_CAL_OFFSET_V);
 			printf("%s", csv_header);
 		}
 		usb_was_open = dtr != 0;
@@ -199,8 +204,7 @@ int main(void)
 		int vout_status = read_adc(&vout_input, &vout_raw, &vout_pin_voltage);
 
 		if (vst_status == 0) {
-			vst_voltage = source_voltage(vst_raw, vst_pin_voltage,
-				VST_CAL_VOLTAGE, VST_CAL_ADC);
+			vst_voltage = vst_raw * VST_CAL_GAIN_V_PER_COUNT + VST_CAL_OFFSET_V;
 		}
 		if (vout_status == 0) {
 			vout_voltage = source_voltage(vout_raw, vout_pin_voltage,

@@ -36,10 +36,16 @@ Opening USB serial at 115200 baud prints the header and continuous CSV:
 time_s,vst_adc_raw,d1_voltage_V,vst_voltage_V,vout_adc_raw,d0_voltage_V,vout_voltage_V,vin_adc_raw,vin_mV,temperature_C,humidity_pct,vst_status,vout_status,ads_status,sht_status
 ```
 
-The nominal voltage multiplier is 1.33 / 0.33 (about 4.03030). In `src/main.c`,
-set each independent `VST_CAL_*` or `VOUT_CAL_*` pair to multimeter volts and
-its matching averaged raw ADC code. Zero pairs use the nominal ratio. Validate
-both channels against a multimeter before collecting experimental data.
+`vst_voltage_V` is calibrated in firmware using averaged `vst_adc_raw` times
+`VST_CAL_GAIN_V_PER_COUNT` plus `VST_CAL_OFFSET_V` in `src/main.c`. The fit
+maps counts directly to capacitor volts and includes the divider. It was checked
+against the multimeter from 0.535 to 1.162 V. Readings outside that range are
+extrapolations. `d1_voltage_V` still reports voltage at the ADC pin.
+
+`vout_voltage_V` uses the nominal 1.33 / 0.33 divider multiplier (about
+4.03030). To enable its separate one-point calibration, set `VOUT_CAL_VOLTAGE`
+to a simultaneous multimeter reading at VOUT and `VOUT_CAL_ADC` to the
+matching averaged `vout_adc_raw`. `vin_mV` uses the ADS1115's ADC conversion.
 
 The divider's source resistance is about 248 kohm (1 Mohm parallel with
 330 kohm). Both channels use 40 us acquisition, within the nRF52840's
