@@ -16,16 +16,15 @@
 static const double R_TOP_OHM = 1000000.0;
 static const double R_BOTTOM_OHM = 330000.0;
 
-/* VSTORE fit against the multimeter over 0.535 to 1.162 V.
- * The gain and offset map averaged D1 ADC counts directly to source volts. */
-static const double VST_CAL_GAIN_V_PER_COUNT = 0.0034887633525722997;
-static const double VST_CAL_OFFSET_V = 0.0575123479938878;
+/* VSTORE fit to nine time-matched multimeter medians from 2026-11-20/21.
+ * Reference medians span 0.818 to 2.480 V. The fit maps D1 counts to source volts. */
+static const double VST_CAL_GAIN_V_PER_COUNT = 0.004209365651919832;
+static const double VST_CAL_OFFSET_V = 0.12394891661442003;
 
-/* VOUT one-point estimate at the 5 V setting: repeated bench voltage and
- * median raw D0 count from the charging run, measured separately.
+/* VOUT one-point scale from the time-matched 5 V recording (IMG_5676).
  * Leave both at zero to use the nominal divider ratio. */
-static const double VOUT_CAL_VOLTAGE = 5.07;
-static const double VOUT_CAL_ADC = 1411.2;
+static const double VOUT_CAL_VOLTAGE = 5.09;
+static const double VOUT_CAL_ADC = 1411.3;
 
 #define SAMPLES 20
 #define SAMPLE_SPACING_MS 5
@@ -191,8 +190,12 @@ int main(void)
 		if (dtr && !usb_was_open) {
 			printf("# BLE TEG_XIAO: startup status=%d; interval=%d ms.\n",
 			       ble_status, BLE_TEST_INTERVAL_MS);
-			printf("# VST calibration: raw * %.9f + %.6f V. Reference range: 0.535-1.162 V.\n",
+			printf("# VST calibration: raw * %.9f + %.6f V. Reference medians: 0.818-2.480 V.\n",
 			       VST_CAL_GAIN_V_PER_COUNT, VST_CAL_OFFSET_V);
+			if (VOUT_CAL_VOLTAGE > 0.0 && VOUT_CAL_ADC > 0.0) {
+				printf("# VOUT calibration: raw * %.3f V / %.1f counts (5 V setting).\n",
+				       VOUT_CAL_VOLTAGE, VOUT_CAL_ADC);
+			}
 			printf("%s", csv_header);
 		}
 		usb_was_open = dtr != 0;
