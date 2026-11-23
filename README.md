@@ -72,7 +72,7 @@ python3 tools/capture_csv.py /dev/cu.usbmodemXXXX --duration 600
 ```
 
 By default, the script creates a timestamped CSV under
-`261119_energyBudgetModeler/261119_capCharging` in the TEG workspace. Pass an
+`261119_energyBudgetModeler/261122_capCharging` in the TEG workspace. Pass an
 explicit CSV path after the serial port to override the default.
 Omit `--duration` to record until Ctrl-C. The script excludes comment lines,
 flushes each row to disk and refuses to overwrite an existing file. `nan` values

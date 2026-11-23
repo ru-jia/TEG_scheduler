@@ -12,7 +12,7 @@ from pathlib import Path
 DEFAULT_OUTPUT_DIR = (
     Path(__file__).resolve().parents[3]
     / "261119_energyBudgetModeler"
-    / "261119_capCharging"
+    / "261122_capCharging"
 )
 
 
