@@ -38,11 +38,12 @@ time_s,vst_adc_raw,d1_voltage_V,vst_voltage_V,vout_adc_raw,d0_voltage_V,vout_vol
 
 `vst_voltage_V` is calibrated in firmware using averaged `vst_adc_raw` times
 `VST_CAL_GAIN_V_PER_COUNT` plus `VST_CAL_OFFSET_V` in `src/main.c`. The fit
-maps counts directly to capacitor volts and includes the divider. It uses nine
-time-matched multimeter medians from the November 20–21 charging run, spanning
-0.818 to 2.480 V. The fit is preliminary, with a 71 mV RMS residual across
-those medians and a 144 mV RMS error when holding out each reference in turn.
-Readings outside 181.4 to 555.8 D1 counts are extrapolations.
+maps counts directly to capacitor volts and includes the divider. The November 22,
+2026 charge-run calibration uses 209 time-matched reference pairs across nine
+captures, weighted equally by capture. The reference pairs span 0.608 to 5.180 V.
+The capture-weighted RMS residual is 13 mV, and the RMS error when holding out
+each capture in turn is 17 mV. Readings outside 162.4 to 1464.8 D1 counts
+are extrapolations.
 `d1_voltage_V` reports voltage at the ADC pin.
 
 `vout_voltage_V` uses a one-point estimate for the 5 V setting. It scales the

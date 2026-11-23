@@ -16,10 +16,10 @@
 static const double R_TOP_OHM = 1000000.0;
 static const double R_BOTTOM_OHM = 330000.0;
 
-/* VSTORE fit to nine time-matched multimeter medians from 2026-11-20/21.
- * Reference medians span 0.818 to 2.480 V. The fit maps D1 counts to source volts. */
-static const double VST_CAL_GAIN_V_PER_COUNT = 0.004209365651919832;
-static const double VST_CAL_OFFSET_V = 0.12394891661442003;
+/* The 2026-11-22 VSTORE fit maps averaged D1 counts directly to capacitor volts.
+ * Matched multimeter readings span 0.608 to 5.180 V. */
+static const double VST_CAL_GAIN_V_PER_COUNT = 0.003490639465;
+static const double VST_CAL_OFFSET_V = 0.047304725;
 
 /* VOUT one-point scale from the time-matched 5 V recording (IMG_5676).
  * Leave both at zero to use the nominal divider ratio. */
@@ -190,7 +190,7 @@ int main(void)
 		if (dtr && !usb_was_open) {
 			printf("# BLE TEG_XIAO: startup status=%d; interval=%d ms.\n",
 			       ble_status, BLE_TEST_INTERVAL_MS);
-			printf("# VST calibration: raw * %.9f + %.6f V. Reference medians: 0.818-2.480 V.\n",
+			printf("# VST calibration: raw * %.12f + %.9f V. Reference medians: 0.608-5.180 V.\n",
 			       VST_CAL_GAIN_V_PER_COUNT, VST_CAL_OFFSET_V);
 			if (VOUT_CAL_VOLTAGE > 0.0 && VOUT_CAL_ADC > 0.0) {
 				printf("# VOUT calibration: raw * %.3f V / %.1f counts (5 V setting).\n",
