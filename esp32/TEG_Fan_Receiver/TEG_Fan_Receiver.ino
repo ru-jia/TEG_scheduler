@@ -10,7 +10,7 @@ const BLEUUID serviceUuid("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
 const BLEUUID txUuid("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
 constexpr char deviceName[] = "TEG_XIAO";
 constexpr int fanPin = 4;  // D2 on XIAO ESP32C3.
-constexpr bool enableFanOutput = false;
+constexpr bool enableFanOutput = true;
 constexpr double fanOnC = 28.0;
 constexpr double fanOffC = 26.0;
 constexpr uint32_t staleAfterMs = 15000;
