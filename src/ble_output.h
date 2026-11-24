@@ -6,6 +6,7 @@
 #include <stddef.h>
 
 int ble_output_init(void);
-int ble_output_send(const char *data, size_t length);
+int ble_output_send(const char *data, size_t length, const char *controller_fields,
+		    double battery_start_mwh);
 
 #endif

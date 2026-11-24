@@ -103,11 +103,41 @@ Check power, wiring, and addresses; reset after fixing startup failures.
 1. In Nordic nRF Connect for Mobile, scan and connect to `TEG_XIAO`.
 2. Open Nordic UART Service (`6e400001…`); enable TX notifications (`6e400003…`).
 3. Select UTF-8/text to see the measurement CSV. It includes the columns
-   through `sht_status`. The PID trace is available over USB.
+   through `sht_status`. The Mac logger can request the PID trace over BLE.
 
-Keep USB power connected; the serial monitor can stay closed. With a small
-MTU, join notification fragments through the newline to reconstruct a row.
-Advertising restarts on disconnect; reconnection still needs testing.
+With a small MTU, join notification fragments through the newline to
+reconstruct a row. Advertising restarts on disconnect. Reconnection still
+needs testing.
+
+### Save battery-powered measurements over BLE
+
+With the XIAO powered by the LiPo and USB disconnected, disconnect any phone
+or ESP32 BLE receiver. The firmware supports one BLE connection at a time.
+On the Mac, enable Bluetooth and run from this directory:
+
+```sh
+python -m pip install bleak
+python tools/capture_ble_csv.py lipo-run-01.csv
+```
+
+Allow Bluetooth access for Terminal if macOS asks. Start the experiment when
+the script reports that it is recording. Press Ctrl-C to finish. Use a new
+filename for each run. The default CSV contains the BLE measurement columns
+through `sht_status`.
+
+Build and flash the updated XIAO firmware once to capture the controller
+columns over BLE. Unplug USB-C for the run and use `--full`:
+
+```sh
+python tools/capture_ble_csv.py lipo-full-01.csv --full
+python tools/capture_ble_csv.py lipo-full-02.csv --full --battery-mwh 750
+```
+
+The full capture uses the USB CSV columns, including `cap_target_J` and
+`event_interval_ms`. `--battery-mwh` supplies known starting energy for
+this BLE connection. If omitted, the firmware uses its USB-entered value
+if present, or reports `nan`. Adaptive cycles with an invalid capacitor
+energy reading skip BLE output. `ble_sent` is `1` in received BLE rows.
 
 ## Capacitor PID test
 
@@ -152,6 +182,7 @@ to the XIAO bootloader drive. Firmware runs automatically after flashing.
 | --- | --- |
 | `src/main.c` | Measurements, conversion, capacitor PID, USB output |
 | `src/ble_output.c`, `.h` | BLE advertising, connections, NUS output |
+| `tools/capture_ble_csv.py` | Record the BLE measurement stream to a CSV on the host |
 | `prj.conf` | Zephyr features |
 | `boards/xiao_ble_nrf52840.overlay` | ADC pin, gain, resolution |
 | `CMakeLists.txt` | Build definition |

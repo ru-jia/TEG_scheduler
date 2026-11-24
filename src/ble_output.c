@@ -3,13 +3,18 @@
 #include "ble_output.h"
 
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <bluetooth/services/nus.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
 
 static struct bt_conn *phone;
+static bool full_csv;
+static double connection_battery_mwh;
 static atomic_t notifications_enabled;
 K_MUTEX_DEFINE(phone_lock);
 
@@ -48,6 +53,8 @@ static void connected(struct bt_conn *conn, uint8_t error)
 	}
 	k_mutex_lock(&phone_lock, K_FOREVER);
 	phone = bt_conn_ref(conn);
+	full_csv = false;
+	connection_battery_mwh = NAN;
 	k_mutex_unlock(&phone_lock);
 }
 
@@ -80,9 +87,39 @@ static void subscription_changed(enum bt_nus_send_status status)
 	atomic_set(&notifications_enabled, status == BT_NUS_SEND_STATUS_ENABLED);
 }
 
+/* A single NUS RX write of "csv" or "csv <mWh>" selects the full CSV. */
+static void receive_command(struct bt_conn *conn, const uint8_t *data, uint16_t length)
+{
+	double battery_mwh = NAN;
+	char command[32];
+
+	if (length == 3 && memcmp(data, "csv", 3) == 0) {
+		/* Use the firmware's existing battery metadata, if set. */
+	} else if (length > 4 && length < sizeof(command) && memcmp(data, "csv ", 4) == 0) {
+		memcpy(command, data, length);
+		command[length] = '\0';
+		char *end;
+
+		battery_mwh = strtod(command + 4, &end);
+		if (end != command + length || !isfinite(battery_mwh) || battery_mwh < 0.0) {
+			return;
+		}
+	} else {
+		return;
+	}
+
+	k_mutex_lock(&phone_lock, K_FOREVER);
+	if (phone == conn) {
+		full_csv = true;
+		connection_battery_mwh = battery_mwh;
+	}
+	k_mutex_unlock(&phone_lock);
+}
+
 int ble_output_init(void)
 {
 	static struct bt_nus_cb callbacks = {
+		.received = receive_command,
 		.send_enabled = subscription_changed,
 	};
 	int ret = bt_nus_init(&callbacks);
@@ -97,16 +134,33 @@ int ble_output_init(void)
 	return start_advertising();
 }
 
-int ble_output_send(const char *data, size_t length)
+int ble_output_send(const char *data, size_t length, const char *controller_fields,
+		    double battery_start_mwh)
 {
 	if (!atomic_get(&notifications_enabled)) {
 		return -ENOTCONN;
 	}
 	k_mutex_lock(&phone_lock, K_FOREVER);
 	struct bt_conn *conn = phone ? bt_conn_ref(phone) : NULL;
+	bool send_full_csv = full_csv;
+	double ble_battery_mwh = connection_battery_mwh;
 	k_mutex_unlock(&phone_lock);
 	if (conn == NULL) {
 		return -ENOTCONN;
+	}
+
+	char full_row[384];
+	if (send_full_csv) {
+		/* A complete row received over BLE implies ble_sent=1. */
+		int size = snprintf(full_row, sizeof(full_row), "%.*s,%s,1,%.9g\n",
+				    (int)length - 1, data, controller_fields,
+				    isfinite(ble_battery_mwh) ? ble_battery_mwh : battery_start_mwh);
+		if (size < 0 || (size_t)size >= sizeof(full_row)) {
+			bt_conn_unref(conn);
+			return -EMSGSIZE;
+		}
+		data = full_row;
+		length = size;
 	}
 
 	/* Fit notifications to the negotiated MTU, including the 20-byte default. */

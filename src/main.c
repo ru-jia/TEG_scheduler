@@ -40,7 +40,7 @@ static const double VOUT_CAL_ADC = 1411.3;
 #define PID_ENABLED 1
 #define CAPACITANCE_F 0.1
 #define ENERGY_TARGET_FRACTION 0.5
-#define PID_KP 10.0             /* s/J */
+#define PID_KP 0.1             /* s/J */
 #define PID_KI 0.0              /* 1/J */
 #define PID_KD 0.0              /* s^2/J */
 #define PID_SLOPE_FILTER_S 10.0 /* Low-pass time constant for dE/dt. */
@@ -48,7 +48,7 @@ static const double VOUT_CAL_ADC = 1411.3;
 #define EVENT_INTERVAL_BIAS_S 5.0 /* Interval at zero error with I and D at zero. */
 #define EVENT_INTERVAL_MAX_S 30.0
 
-/* BLE keeps the original CSV schema. USB adds controller fields after it. */
+/* USB and opt-in BLE add controller fields after the measurement columns. */
 static const char measurement_columns[] =
 	"time_s,vst_adc_raw,d1_voltage_V,vst_voltage_V,"
 	"vout_adc_raw,d0_voltage_V,vout_voltage_V,vin_adc_raw,vin_mV,"
@@ -402,8 +402,7 @@ int main(void)
 		}
 		int event_interval_ms = update_event_interval(&pid, cap_energy_j, cycle_start);
 
-		/* Keep the BLE row byte format unchanged. USB reuses its fields
-		 * and appends the PID trace separately. */
+		/* The measurement row is also the default BLE format. */
 		char line[256];
 		int length = snprintf(line, sizeof(line),
 		       "%.3f,%.1f,%.4f,%.4f,%.1f,%.4f,%.4f,%.0f,%.3f,%.2f,%.2f,%d,%d,%d,%d\n",
@@ -411,14 +410,21 @@ int main(void)
 			       vout_raw, vout_pin_voltage, vout_voltage, vin_raw, vin_mv,
 		       temperature, humidity, vst_status, vout_status, ads_status, sht_status);
 
+		double target_j = pid.has_target ? pid.target_j : (double)NAN;
+		char controller_fields[112];
+		int controller_length = snprintf(controller_fields, sizeof(controller_fields),
+						 "%.6f,%.6f,%.6f,%.2f,%d", cap_energy_j, target_j,
+						 target_j - cap_energy_j, pid.net_power_w * 1000000.0,
+						 event_interval_ms);
 		bool ble_sent = false;
-		if (length < 0 || (size_t)length >= sizeof(line)) {
+		if (length < 0 || (size_t)length >= sizeof(line) || controller_length < 0 ||
+		    (size_t)controller_length >= sizeof(controller_fields)) {
 			printf("# CSV formatting failed.\n");
 		} else {
 			/* One cycle is one sensing event and one BLE send attempt.
 			 * A failed adaptive VSTORE read skips the send this cycle. */
 			if (ble_status == 0 && (!PID_ENABLED || isfinite(cap_energy_j))) {
-				ret = ble_output_send(line, length);
+				ret = ble_output_send(line, length, controller_fields, battery.start_mwh);
 				if (ret == 0) {
 					ble_sent = true;
 				} else if (ret != -ENOTCONN) {
@@ -426,13 +432,8 @@ int main(void)
 				}
 			}
 			if (dtr) {
-				double target_j = pid.has_target ? pid.target_j : (double)NAN;
-
-				/* Omit the BLE row's newline to append USB-only fields. */
-				printf("%.*s,%.6f,%.6f,%.6f,%.2f,%d,%d,%.9g\n",
-				       length - 1, line, cap_energy_j, target_j,
-				       target_j - cap_energy_j, pid.net_power_w * 1000000.0,
-				       event_interval_ms, ble_sent, battery.start_mwh);
+				printf("%.*s,%s,%d,%.9g\n", length - 1, line, controller_fields,
+				       ble_sent, battery.start_mwh);
 			}
 		}
 
