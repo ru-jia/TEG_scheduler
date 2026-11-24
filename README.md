@@ -2,8 +2,9 @@
 
 XIAO nRF52840 firmware on nRF Connect SDK 3.3.4 / Zephyr. Reads D0 VOUT and D1 VSTORE,
 ADS1115 VIN, and SHT40 temperature/humidity; sends CSV over USB and BLE.
-USB readings and phone BLE notifications work. Energy-aware scheduling is
-pending, and direct TEG/LTC power could not start XIAO.
+USB readings and phone BLE notifications work. The capacitor PID adjusts
+the shared sensing and BLE interval for bench tests. Direct TEG/LTC power
+could not start XIAO.
 
 ## Wiring
 
@@ -27,13 +28,14 @@ LTC3108 output, connect both VS1 and VS2 to VAUX, not XIAO 3V3.
 
 Each cycle averages 20 samples per
 XIAO channel and reads both sensors. The first conversion after selecting each
-channel is discarded. Cycles target 1 second including acquisition; slow reads
-or BLE output can extend this. Channels are read sequentially, not simultaneously.
+channel is discarded. The commanded cycle period includes acquisition and BLE.
+The baseline targets 1 second. Adaptive cycles target 1–30 seconds, and slow
+reads or BLE output can extend a cycle. Channels are read sequentially.
 The timestamp is board uptime at the start of acquisition, not experiment time zero.
 Opening USB serial at 115200 baud prints the header and continuous CSV:
 
 ```text
-time_s,vst_adc_raw,d1_voltage_V,vst_voltage_V,vout_adc_raw,d0_voltage_V,vout_voltage_V,vin_adc_raw,vin_mV,temperature_C,humidity_pct,vst_status,vout_status,ads_status,sht_status
+time_s,vst_adc_raw,d1_voltage_V,vst_voltage_V,vout_adc_raw,d0_voltage_V,vout_voltage_V,vin_adc_raw,vin_mV,temperature_C,humidity_pct,vst_status,vout_status,ads_status,sht_status,cap_energy_J,cap_target_J,cap_error_J,cap_net_power_uW,event_interval_ms,ble_sent,battery_start_mWh
 ```
 
 `vst_voltage_V` is calibrated in firmware using averaged `vst_adc_raw` times
@@ -70,6 +72,7 @@ Run from this project directory:
 ```sh
 python3 tools/capture_csv.py --list
 python3 tools/capture_csv.py /dev/cu.usbmodemXXXX --duration 600
+python3 tools/capture_csv.py /dev/cu.usbmodemXXXX --battery-mwh 750 --duration 600
 ```
 
 By default, the script creates a timestamped CSV under
@@ -77,7 +80,15 @@ By default, the script creates a timestamped CSV under
 explicit CSV path after the serial port to override the default.
 Omit `--duration` to record until Ctrl-C. The script excludes comment lines,
 flushes each row to disk and refuses to overwrite an existing file. `nan` values
-and device error statuses remain in the CSV. For capacitor charging, start
+and device error statuses remain in the CSV. To enter starting battery
+energy manually, send `battery_mwh 750` followed by Enter over the USB
+serial console. Replace 750 with the run's starting energy in mWh. The
+firmware acknowledges the value at the next cycle, up to about 30 s later.
+The capture script waits for that reply when `--battery-mwh` is supplied.
+The value stays in RAM until reset or until you enter a new one. It is run
+metadata for USB capture, independent of the capacitor PID.
+
+For capacitor charging, start
 capture before applying the thermal stimulus. Plot `vst_voltage_V` against
 `time_s` for rows with `vst_status = 0`. Subtract the board uptime at stimulus
 onset to set the experiment time origin. The slope over a selected interval
@@ -91,14 +102,38 @@ Check power, wiring, and addresses; reset after fixing startup failures.
 
 1. In Nordic nRF Connect for Mobile, scan and connect to `TEG_XIAO`.
 2. Open Nordic UART Service (`6e400001…`); enable TX notifications (`6e400003…`).
-3. Select UTF-8/text to see CSV about every 5 seconds, using the columns above.
+3. Select UTF-8/text to see the measurement CSV. It includes the columns
+   through `sht_status`. The PID trace is available over USB.
 
 Keep USB power connected; the serial monitor can stay closed. With a small
 MTU, join notification fragments through the newline to reconstruct a row.
 Advertising restarts on disconnect; reconnection still needs testing.
 
-`BLE_TEST_INTERVAL_MS = 5000` controls the current test interval.
-`INITIAL_TX_INTERVAL_MS = 300000` is reserved for later scheduling.
+## Capacitor PID test
+
+Set `PID_ENABLED` to `0` in `src/main.c` for the fixed one-second sense-and-send
+baseline. For tracking, set it to `1`, build, and flash. The first valid
+VSTORE reading after boot sets the reference to half that reading's capacitor
+energy. Begin each gain trial at the same VSTORE and with the same phone
+connection and thermal conditions. The PID uses the 0.1 F storage capacitor
+and adjusts the interval between complete sensing and sending cycles. Each
+cycle updates the PID using the actual elapsed time since the preceding sample
+and attempts to send the row when BLE is available.
+
+Start with `PID_KP` and `PID_KI = PID_KD = 0`. Change one gain per build.
+Plot `cap_energy_J` and `cap_target_J` against `time_s`, then compare
+`cap_error_J`, `event_interval_ms`, and `ble_sent` between runs. The
+interval is the target time from this cycle's start to the next. Compare
+successive `time_s` values to see the actual cycle spacing and use
+`ble_sent` to identify successful send calls. The first sample has no
+slope estimate. A failed adaptive VSTORE read skips BLE and retries on
+the next cycle at the 30 s interval.
+
+`cap_net_power_uW` is the filtered slope of measured capacitor energy. It
+includes charging and any load seen at VSTORE. If the capacitor keeps gaining
+energy even with a connected phone receiving every second, the scheduler
+cannot lower it toward the reference under those conditions. The 1 s baseline
+can show whether the reference is reachable before comparing gains.
 
 ## Build and flash
 
@@ -115,7 +150,7 @@ to the XIAO bootloader drive. Firmware runs automatically after flashing.
 
 | File | Purpose |
 | --- | --- |
-| `src/main.c` | Measurements, conversion, USB output |
+| `src/main.c` | Measurements, conversion, capacitor PID, USB output |
 | `src/ble_output.c`, `.h` | BLE advertising, connections, NUS output |
 | `prj.conf` | Zephyr features |
 | `boards/xiao_ble_nrf52840.overlay` | ADC pin, gain, resolution |

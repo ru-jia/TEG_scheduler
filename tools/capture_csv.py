@@ -3,6 +3,7 @@
 
 import argparse
 import csv
+import math
 import sys
 import time
 from datetime import datetime
@@ -23,10 +24,17 @@ def main():
                         help=f"New CSV file (default: timestamped file in {DEFAULT_OUTPUT_DIR})")
     parser.add_argument("--list", action="store_true", help="List serial devices")
     parser.add_argument("--duration", type=float, default=0,
-                        help="Seconds after opening port; 0 means until Ctrl-C")
+                        help="Seconds to record after opening the port or setting battery energy; "
+                             "0 means until Ctrl-C")
+    parser.add_argument("--battery-mwh", type=float,
+                        help="Starting battery energy in mWh to record for this run")
     args = parser.parse_args()
     if args.duration < 0:
         parser.error("--duration must be nonnegative")
+    if args.battery_mwh is not None and (
+        not math.isfinite(args.battery_mwh) or args.battery_mwh < 0
+    ):
+        parser.error("--battery-mwh must be finite and nonnegative")
     try:
         import serial
         from serial.tools import list_ports
@@ -51,9 +59,18 @@ def main():
         try:
             with serial.Serial(args.port, 115200, timeout=1, exclusive=True) as device:
                 device.dtr = True
+                waiting_for_battery = args.battery_mwh is not None
+                if waiting_for_battery:
+                    device.write(f"battery_mwh {args.battery_mwh:.9g}\n".encode("ascii"))
                 print(f"Recording to {output_path}. Press Ctrl-C to stop.", file=sys.stderr)
-                while not args.duration or time.monotonic() - started < args.duration:
+                while (waiting_for_battery or not args.duration
+                       or time.monotonic() - started < args.duration):
+                    if waiting_for_battery and time.monotonic() - started >= 45:
+                        raise SystemExit("Firmware did not acknowledge the battery energy input")
                     line = device.readline().decode("ascii", errors="replace").strip()
+                    if waiting_for_battery and line.startswith("# battery_start_mWh="):
+                        waiting_for_battery = False
+                        started = time.monotonic()
                     if not line or line.startswith("#"):
                         continue
                     row = next(csv.reader([line]))
@@ -67,7 +84,7 @@ def main():
                         elif row != header:
                             raise ValueError("CSV schema changed during capture")
                         continue
-                    if header is None or len(row) != len(header):
+                    if waiting_for_battery or header is None or len(row) != len(header):
                         continue
                     try:
                         for value in row:
