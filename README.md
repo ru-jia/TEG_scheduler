@@ -2,6 +2,9 @@
 
 XIAO nRF52840 firmware on nRF Connect SDK 3.3.4 / Zephyr. Reads D0 VOUT and D1 VSTORE,
 ADS1115 VIN, and SHT40 temperature/humidity; sends CSV over USB and BLE.
+**Current hardware:** LTC3108 VOUT set to 3.3 V powers the SHT40 and ADS1115; the
+XIAO runs from its LiPo or USB. Wiring: `261124 TEG harvester-powered sensors build`.
+Earlier 5 V firmware is kept in `archive/` (see `archive/README.md`).
 USB readings and phone BLE notifications work. The capacitor PID adjusts
 the shared sensing and BLE interval for bench tests. Direct TEG/LTC power
 could not start XIAO.
@@ -14,7 +17,7 @@ Use USB power for XIAO and share ground with LTC and both sensors.
 | --- | --- |
 | VSTORE measurement | `VSTORE -> 1 Mohm -> D1/A1 -> 330 kohm -> GND` |
 | VOUT measurement | `VOUT -> 1 Mohm -> D0/A0 -> 330 kohm -> GND` |
-| Sensor power | XIAO 3V3 to ADS1115 VDD and SHT40 VIN |
+| Sensor power | LTC3108 VOUT (3.3 V: VS1 to VAUX, VS2 to GND) to ADS1115 VDD and SHT40 VIN |
 | I2C | Both SDA to D4; both SCL to D5 |
 | ADS1115 | ADDR to GND (`0x48`); A0 to LTC VIN/TEG positive |
 | SHT40 | Address `0x44` |
@@ -35,7 +38,7 @@ The timestamp is board uptime at the start of acquisition, not experiment time z
 Opening USB serial at 115200 baud prints the header and continuous CSV:
 
 ```text
-time_s,vst_adc_raw,d1_voltage_V,vst_voltage_V,vout_adc_raw,d0_voltage_V,vout_voltage_V,vin_adc_raw,vin_mV,temperature_C,humidity_pct,vst_status,vout_status,ads_status,sht_status,cap_energy_J,cap_target_J,cap_error_J,cap_net_power_uW,event_interval_ms,ble_sent,battery_start_mWh
+time_s,vst_adc_raw,d1_voltage_V,vst_voltage_V,vout_adc_raw,d0_voltage_V,vout_voltage_V,vin_adc_raw,vin_mV,temperature_C,humidity_pct,vst_status,vout_status,ads_status,sht_status,cap_energy_J,cap_energy_filt_J,cap_target_J,cap_error_J,cap_net_power_uW,event_interval_ms,ble_sent,battery_start_mWh,pid_p_Hz,pid_i_Hz,pid_d_Hz
 ```
 
 `vst_voltage_V` is calibrated in firmware using averaged `vst_adc_raw` times
@@ -94,9 +97,9 @@ capture before applying the thermal stimulus. Plot `vst_voltage_V` against
 onset to set the experiment time origin. The slope over a selected interval
 is the change in VSTORE divided by elapsed time.
 
-Status: `0` = success, `-19` = device unavailable at startup,
-`-34` = ADS1115 full scale. Failed values appear as `nan`.
-Check power, wiring, and addresses; reset after fixing startup failures.
+Status: `0` = success, `-11` = sensors skipped because VOUT < 3.0 V,
+`-19` = device unavailable, `-34` = ADS1115 full scale, `-77` = SHT40 checksum
+error, other negatives = I2C errors. Failed values appear as `nan`.
 
 ## Phone BLE test
 
@@ -133,37 +136,48 @@ python tools/capture_ble_csv.py lipo-full-01.csv --full
 python tools/capture_ble_csv.py lipo-full-02.csv --full --battery-mwh 750
 ```
 
-The full capture uses the USB CSV columns, including `cap_target_J` and
-`event_interval_ms`. `--battery-mwh` supplies known starting energy for
-this BLE connection. If omitted, the firmware uses its USB-entered value
-if present, or reports `nan`. Adaptive cycles with an invalid capacitor
-energy reading skip BLE output. `ble_sent` is `1` in received BLE rows.
+With `--full`, the logger saves all 26 columns in the USB CSV order, from
+`time_s` through `pid_d_Hz`. `--battery-mwh` sends the starting
+battery energy in milliwatt-hours to the XIAO for this BLE connection. If
+omitted, the firmware uses its USB-entered value if present, or reports
+`nan`. Adaptive cycles with an invalid capacitor energy reading skip BLE
+output. `ble_sent` is `1` in received BLE rows.
 
-## Capacitor PID test
+## Capacitor energy PID test
 
-Set `PID_ENABLED` to `0` in `src/main.c` for the fixed one-second sense-and-send
-baseline. For tracking, set it to `1`, build, and flash. The first valid
-VSTORE reading after boot sets the reference to half that reading's capacitor
-energy. Begin each gain trial at the same VSTORE and with the same phone
-connection and thermal conditions. The PID uses the 0.1 F storage capacitor
-and adjusts the interval between complete sensing and sending cycles. Each
-cycle updates the PID using the actual elapsed time since the preceding sample
-and attempts to send the row when BLE is available.
+The SHT40 and ADS1115 run from LTC3108 VOUT (3.3 V), so every reading is paid
+for from the harvester, and the 0.1 F capacitor on VSTORE is the reserve. The
+PID sets how often to read so the reserve stays at its target. The sensors are
+read directly over I²C (no Zephyr sensor drivers) and only while VOUT ≥
+`VOUT_MIN_FOR_SENSORS_V` (3.0 V). Otherwise `sht_status` and `ads_status` are
+`-11` and the read is retried next cycle.
 
-Start with `PID_KP` and `PID_KI = PID_KD = 0`. Change one gain per build.
-Plot `cap_energy_J` and `cap_target_J` against `time_s`, then compare
-`cap_error_J`, `event_interval_ms`, and `ble_sent` between runs. The
-interval is the target time from this cycle's start to the next. Compare
-successive `time_s` values to see the actual cycle spacing and use
-`ble_sent` to identify successful send calls. The first sample has no
-slope estimate. A failed adaptive VSTORE read skips BLE and retries on
-the next cycle at the 30 s interval.
+The controller output is an event rate in Hz; `event_interval_ms` is 1000 / rate,
+clamped to 0.5–30 s. The controller works on `cap_energy_filt_J`, a 10 s running
+average of `cap_energy_J`, because ADC noise (about 1 mJ) is larger than one
+event (tens of µJ). `cap_error_J` = filtered energy − target; positive means
+surplus and a faster rate. The target is `ENERGY_TARGET_FRACTION` (1.0) times
+the first valid energy of the run: holding the starting level keeps net power at
+zero (energy-neutral sensing) without slow drift. Start below the 5.2 V ceiling. Default gains assume about 20 µJ per
+event: `PID_KP 500`, `PID_KI 1.0`, `PID_KD 0`, `RATE_BIAS_HZ 0.5`.
 
-`cap_net_power_uW` is the filtered slope of measured capacitor energy. It
-includes charging and any load seen at VSTORE. If the capacitor keeps gaining
-energy even with a connected phone receiving every second, the scheduler
-cannot lower it toward the reference under those conditions. The 1 s baseline
-can show whether the reference is reachable before comparing gains.
+### Measure the event energy
+
+Hold VSTORE around 4–4.5 V (below the 5.2 V ceiling) at a steady thermal
+condition. Run `PID_ENABLED 0` with `BASELINE_INTERVAL_MS 500` for 20 minutes,
+then 5000 for 20 minutes. Fit the slope of `cap_energy_J` for each:
+`E_event = (P_5000 − P_500) / 1.8 Hz`. Then set `PID_KP = 1 / (E_event × 100 s)` and
+`PID_KI = E_event × PID_KP² / 4`. `SHT_READS_PER_EVENT` averages more SHT40
+readings per event, which gives smoother data at a higher energy cost.
+
+### What to expect
+
+The controller can hold the target only when harvest lies between the fixed
+loads (dividers, sensor idle: about 10–20 µW) and the most the sensors can spend
+at 0.5 s. Above that, the capacitor stays full at the fastest rate; below it,
+the rate sits at 30 s and the reserve drains. A fraction below 1.0 is a step
+test, and a slow one: each event is cheap, so draining 20% takes hours. Full
+procedure: Section 4 of the wiring doc.
 
 ## Build and flash
 
@@ -180,11 +194,12 @@ to the XIAO bootloader drive. Firmware runs automatically after flashing.
 
 | File | Purpose |
 | --- | --- |
-| `src/main.c` | Measurements, conversion, capacitor PID, USB output |
+| `src/main.c` | Measurements, direct I²C sensor reads, energy PID, USB output |
 | `src/ble_output.c`, `.h` | BLE advertising, connections, NUS output |
 | `tools/capture_ble_csv.py` | Record the BLE measurement stream to a CSV on the host |
 | `prj.conf` | Zephyr features |
-| `boards/xiao_ble_nrf52840.overlay` | ADC pin, gain, resolution |
+| `boards/xiao_ble_nrf52840.overlay` | ADC pins, gain, resolution; I²C bus |
+| `archive/` | Earlier 5 V firmware snapshots, not built |
 | `CMakeLists.txt` | Build definition |
 
 ## Reflection on power integration

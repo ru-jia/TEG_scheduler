@@ -134,8 +134,7 @@ int ble_output_init(void)
 	return start_advertising();
 }
 
-int ble_output_send(const char *data, size_t length, const char *controller_fields,
-		    double battery_start_mwh)
+int ble_output_send(const char *data, size_t length, const struct ble_csv_controller *controller)
 {
 	if (!atomic_get(&notifications_enabled)) {
 		return -ENOTCONN;
@@ -149,12 +148,20 @@ int ble_output_send(const char *data, size_t length, const char *controller_fiel
 		return -ENOTCONN;
 	}
 
-	char full_row[384];
 	if (send_full_csv) {
+		/* Only the main sensing loop calls this function. */
+		static char full_row[448];
+		double battery_mwh = isfinite(ble_battery_mwh) ? ble_battery_mwh :
+				     controller->battery_start_mwh;
+
 		/* A complete row received over BLE implies ble_sent=1. */
-		int size = snprintf(full_row, sizeof(full_row), "%.*s,%s,1,%.9g\n",
-				    (int)length - 1, data, controller_fields,
-				    isfinite(ble_battery_mwh) ? ble_battery_mwh : battery_start_mwh);
+		int size = snprintf(full_row, sizeof(full_row),
+				    "%.*s,%.6f,%.6f,%.6f,%.6f,%.2f,%d,1,%.9g,%.5f,%.5f,%.5f\n",
+				    (int)length - 1, data, controller->energy_j,
+				    controller->energy_filt_j, controller->target_j,
+				    controller->energy_filt_j - controller->target_j,
+				    controller->net_power_uw, controller->interval_ms, battery_mwh,
+				    controller->p_hz, controller->i_hz, controller->d_hz);
 		if (size < 0 || (size_t)size >= sizeof(full_row)) {
 			bt_conn_unref(conn);
 			return -EMSGSIZE;

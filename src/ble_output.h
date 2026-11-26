@@ -5,8 +5,19 @@
 
 #include <stddef.h>
 
+struct ble_csv_controller {
+	double energy_j;
+	double energy_filt_j; /* Smoothed energy the controller uses. */
+	double target_j;
+	double net_power_uw;
+	int interval_ms;
+	double battery_start_mwh;
+	double p_hz;          /* PID terms, logged to help with tuning. */
+	double i_hz;
+	double d_hz;
+};
+
 int ble_output_init(void);
-int ble_output_send(const char *data, size_t length, const char *controller_fields,
-		    double battery_start_mwh);
+int ble_output_send(const char *data, size_t length, const struct ble_csv_controller *controller);
 
 #endif

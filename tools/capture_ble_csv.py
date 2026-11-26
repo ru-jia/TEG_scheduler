@@ -18,8 +18,8 @@ COLUMNS = (
     "temperature_C,humidity_pct,vst_status,vout_status,ads_status,sht_status"
 ).split(",")
 CONTROLLER_COLUMNS = (
-    "cap_energy_J,cap_target_J,cap_error_J,cap_net_power_uW,event_interval_ms,ble_sent,"
-    "battery_start_mWh"
+    "cap_energy_J,cap_energy_filt_J,cap_target_J,cap_error_J,cap_net_power_uW,"
+    "event_interval_ms,ble_sent,battery_start_mWh,pid_p_Hz,pid_i_Hz,pid_d_Hz"
 ).split(",")
 
 
@@ -103,7 +103,7 @@ async def capture(output_path, full=False, battery_mwh=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path, help="Path to a new CSV file")
-    parser.add_argument("--full", action="store_true", help="Request controller and battery columns")
+    parser.add_argument("--full", action="store_true", help="Save all measurement, controller, and battery columns")
     parser.add_argument("--battery-mwh", type=float, help="Starting battery energy for this run (requires --full)")
     args = parser.parse_args()
     if args.battery_mwh is not None:

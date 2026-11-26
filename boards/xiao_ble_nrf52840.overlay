@@ -4,38 +4,17 @@
 
 / {
 	zephyr,user {
-		io-channels = <&adc 1>, <&adc 0>, <&ads1115 0>;
-		io-channel-names = "vst", "vout", "vin";
+		io-channels = <&adc 1>, <&adc 0>;
+		io-channel-names = "vst", "vout";
 	};
 };
 
+/* I2C on XIAO D4 (SDA) / D5 (SCL). The SHT40 (0x44) and ADS1115 (0x48) are powered
+ * from LTC3108 VOUT and are read directly by main.c, so they have no driver nodes
+ * here. (Zephyr's drivers probe once at boot and stay failed if VOUT is not up yet.) */
 &i2c1 {
 	status = "okay";
 	clock-frequency = <I2C_BITRATE_STANDARD>;
-
-	ads1115: adc@48 {
-		compatible = "ti,ads1115";
-		reg = <0x48>;
-		#io-channel-cells = <1>;
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		channel@0 {
-			reg = <0>;
-			zephyr,gain = "ADC_GAIN_8";
-			zephyr,reference = "ADC_REF_INTERNAL";
-			zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
-			zephyr,input-positive = <0>;
-			/* Single-ended ADS1115 uses 15 positive bits, +/-256 mV range. */
-			zephyr,resolution = <15>;
-		};
-	};
-
-	sht40: sht40@44 {
-		compatible = "sensirion,sht4x";
-		reg = <0x44>;
-		repeatability = <2>;
-	};
 };
 
 &adc {
