@@ -55,8 +55,8 @@
 
 /* 1 = the controller picks the interval.
  * 0 = fixed interval of BASELINE_INTERVAL_MS (for measuring P_idle and E_event). */
-#define PID_ENABLED 1
-#define BASELINE_INTERVAL_MS 1000
+#define PID_ENABLED 0
+#define BASELINE_INTERVAL_MS 500
 
 /* Number of SHT40 readings averaged per event. More readings give smoother data and
  * cost more harvested energy per event. */

@@ -74,12 +74,11 @@ Run from this project directory:
 
 ```sh
 python3 tools/capture_csv.py --list
-python3 tools/capture_csv.py /dev/cu.usbmodemXXXX --duration 600
+python3 tools/capture_csv.py /dev/cu.usbmodemXXXX run-01.csv --duration 600
 ```
 
-By default, the script creates a timestamped CSV under
-`261119_energyBudgetModeler/261122_capCharging` in the TEG workspace. Pass an
-explicit CSV path after the serial port to override the default.
+Give the CSV path after the serial port; a relative path is relative to the
+folder you run the command from.
 Omit `--duration` to record until Ctrl-C. The script excludes comment lines,
 flushes each row to disk and refuses to overwrite an existing file. `nan` values
 and device error statuses remain in the CSV.
