@@ -142,11 +142,12 @@ this only matters if the kd is not zero.*/
 /* Both voltages reach the ADC pins through the same kind of divider:
  *     source -- 1 Mohm -- ADC pin -- 330 kohm -- GND
  * D0/A0 measures VOUT; D1/A1 measures VSTORE (the capacitor). */
-#define DIVIDER_TOP_OHM 1000000.0
+#define DIVIDER_TOP_OHM 1000000.0 // the divier resistance we used
 #define DIVIDER_BOTTOM_OHM 330000.0
 
 /* VSTORE calibration from the Nov 22, 2026 charge runs (multimeter, 0.608-5.180 V):
  *     capacitor volts = averaged D1 count * gain + offset
+ * 		RMS error of about 13 mV
  * The fit already includes the divider. */
 #define VST_CAL_GAIN_V_PER_COUNT 0.003490639465
 #define VST_CAL_OFFSET_V 0.047304725
@@ -188,10 +189,16 @@ static const char controller_columns[] =
  * Hardware handles, built by Zephyr from boards/xiao_ble_nrf52840.overlay
  * ==================================================================================== */
 
+ //macros Zephyr uses to find pins and stuff, and packs it in a struct
 static const struct adc_dt_spec vst_input =
 	ADC_DT_SPEC_GET_BY_NAME(DT_PATH(zephyr_user), vst);
 static const struct adc_dt_spec vout_input =
 	ADC_DT_SPEC_GET_BY_NAME(DT_PATH(zephyr_user), vout);
+
+// "static": these handles are private to main.c
+// "const" : they never change after the build.
+// "const struct device *const": both the device it points to 
+// 								 and the pointer itself are read-only.
 
 /* The I2C bus on XIAO D4 (SDA) and D5 (SCL). The sensors are read directly on this
  * bus instead of through Zephyr's sensor drivers: those drivers check each sensor
