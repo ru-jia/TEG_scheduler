@@ -563,7 +563,7 @@ int main(void)
 			.temperature = NAN, .humidity = NAN,
 			.ads_status = -ENODEV, .sht_status = -ENODEV,
 			.cap_energy_j = NAN,
-		};
+		}; // a bundle holding everything form one cycle
 
 		/* DTR is set while a program on the laptop has the USB serial port open
 		 * (for example capture_csv.py). When one opens, print the settings and the
