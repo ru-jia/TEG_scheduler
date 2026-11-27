@@ -3,18 +3,17 @@
 #include "ble_output.h"
 
 #include <errno.h>
-#include <math.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <bluetooth/services/nus.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
 
+/* The connected receiver, or NULL. phone and full_row are shared with the Bluetooth
+ * callbacks, so they are only touched while holding phone_lock. */
 static struct bt_conn *phone;
-static bool full_csv;
-static double connection_battery_mwh;
+static bool full_row;
 static atomic_t notifications_enabled;
 K_MUTEX_DEFINE(phone_lock);
 
@@ -53,8 +52,7 @@ static void connected(struct bt_conn *conn, uint8_t error)
 	}
 	k_mutex_lock(&phone_lock, K_FOREVER);
 	phone = bt_conn_ref(conn);
-	full_csv = false;
-	connection_battery_mwh = NAN;
+	full_row = false; /* Each new connection starts with the short row. */
 	k_mutex_unlock(&phone_lock);
 }
 
@@ -72,7 +70,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 static void recycled(void)
 {
-	/* Restart only after the previous connection object has been released. */
+	/* Advertise again only after the previous connection has been released. */
 	k_work_submit(&advertising_work);
 }
 
@@ -87,31 +85,15 @@ static void subscription_changed(enum bt_nus_send_status status)
 	atomic_set(&notifications_enabled, status == BT_NUS_SEND_STATUS_ENABLED);
 }
 
-/* A single NUS RX write of "csv" or "csv <mWh>" selects the full CSV. */
+/* A write of exactly "csv" to NUS RX switches this connection to the full row. */
 static void receive_command(struct bt_conn *conn, const uint8_t *data, uint16_t length)
 {
-	double battery_mwh = NAN;
-	char command[32];
-
-	if (length == 3 && memcmp(data, "csv", 3) == 0) {
-		/* Use the firmware's existing battery metadata, if set. */
-	} else if (length > 4 && length < sizeof(command) && memcmp(data, "csv ", 4) == 0) {
-		memcpy(command, data, length);
-		command[length] = '\0';
-		char *end;
-
-		battery_mwh = strtod(command + 4, &end);
-		if (end != command + length || !isfinite(battery_mwh) || battery_mwh < 0.0) {
-			return;
-		}
-	} else {
+	if (length != 3 || memcmp(data, "csv", 3) != 0) {
 		return;
 	}
-
 	k_mutex_lock(&phone_lock, K_FOREVER);
 	if (phone == conn) {
-		full_csv = true;
-		connection_battery_mwh = battery_mwh;
+		full_row = true;
 	}
 	k_mutex_unlock(&phone_lock);
 }
@@ -134,54 +116,39 @@ int ble_output_init(void)
 	return start_advertising();
 }
 
-int ble_output_send(const char *data, size_t length, const struct ble_csv_controller *controller)
+bool ble_output_full_row_requested(void)
+{
+	k_mutex_lock(&phone_lock, K_FOREVER);
+	bool requested = phone != NULL && full_row;
+	k_mutex_unlock(&phone_lock);
+	return requested;
+}
+
+int ble_output_send(const char *row, size_t length)
 {
 	if (!atomic_get(&notifications_enabled)) {
 		return -ENOTCONN;
 	}
 	k_mutex_lock(&phone_lock, K_FOREVER);
 	struct bt_conn *conn = phone ? bt_conn_ref(phone) : NULL;
-	bool send_full_csv = full_csv;
-	double ble_battery_mwh = connection_battery_mwh;
 	k_mutex_unlock(&phone_lock);
 	if (conn == NULL) {
 		return -ENOTCONN;
 	}
 
-	if (send_full_csv) {
-		/* Only the main sensing loop calls this function. */
-		static char full_row[448];
-		double battery_mwh = isfinite(ble_battery_mwh) ? ble_battery_mwh :
-				     controller->battery_start_mwh;
-
-		/* A complete row received over BLE implies ble_sent=1. */
-		int size = snprintf(full_row, sizeof(full_row),
-				    "%.*s,%.6f,%.6f,%.6f,%.6f,%.2f,%d,1,%.9g,%.5f,%.5f,%.5f\n",
-				    (int)length - 1, data, controller->energy_j,
-				    controller->energy_filt_j, controller->target_j,
-				    controller->energy_filt_j - controller->target_j,
-				    controller->net_power_uw, controller->interval_ms, battery_mwh,
-				    controller->p_hz, controller->i_hz, controller->d_hz);
-		if (size < 0 || (size_t)size >= sizeof(full_row)) {
-			bt_conn_unref(conn);
-			return -EMSGSIZE;
-		}
-		data = full_row;
-		length = size;
-	}
-
-	/* Fit notifications to the negotiated MTU, including the 20-byte default. */
-	size_t payload_size = bt_nus_get_mtu(conn);
+	/* A notification can carry at most one MTU of data (20 bytes by default), so
+	 * longer rows go out in pieces. The receiver joins them up to the newline. */
+	size_t chunk_limit = bt_nus_get_mtu(conn);
 	int ret = 0;
 
 	while (length > 0) {
-		size_t chunk_size = MIN(length, payload_size);
+		size_t chunk_size = MIN(length, chunk_limit);
 
-		ret = bt_nus_send(conn, (const uint8_t *)data, chunk_size);
+		ret = bt_nus_send(conn, (const uint8_t *)row, chunk_size);
 		if (ret < 0) {
 			break;
 		}
-		data += chunk_size;
+		row += chunk_size;
 		length -= chunk_size;
 	}
 	bt_conn_unref(conn);

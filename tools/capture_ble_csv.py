@@ -19,11 +19,11 @@ COLUMNS = (
 ).split(",")
 CONTROLLER_COLUMNS = (
     "cap_energy_J,cap_energy_filt_J,cap_target_J,cap_error_J,cap_net_power_uW,"
-    "event_interval_ms,ble_sent,battery_start_mWh,pid_p_Hz,pid_i_Hz,pid_d_Hz"
+    "event_interval_ms,ble_sent,pid_p_Hz,pid_i_Hz,pid_d_Hz"
 ).split(",")
 
 
-async def capture(output_path, full=False, battery_mwh=None):
+async def capture(output_path, full=False):
     from bleak import BleakClient, BleakScanner
 
     print("Scanning for TEG_XIAO…", file=sys.stderr, flush=True)
@@ -86,8 +86,8 @@ async def capture(output_path, full=False, battery_mwh=None):
 
             print("Connected. Waiting for the first measurement…", file=sys.stderr, flush=True)
             if full:
-                command = b"csv" if battery_mwh is None else f"csv {battery_mwh:.9g}".encode("ascii")
-                await client.write_gatt_char(NUS_RX, command, response=True)
+                # Ask the firmware for the full row (measurement + controller columns).
+                await client.write_gatt_char(NUS_RX, b"csv", response=True)
             await client.start_notify(NUS_TX, on_notification)
             first_row_timer = loop.call_later(45, first_row_timeout)
             try:
@@ -103,12 +103,8 @@ async def capture(output_path, full=False, battery_mwh=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path, help="Path to a new CSV file")
-    parser.add_argument("--full", action="store_true", help="Save all measurement, controller, and battery columns")
-    parser.add_argument("--battery-mwh", type=float, help="Starting battery energy for this run (requires --full)")
+    parser.add_argument("--full", action="store_true", help="Save the measurement and controller columns")
     args = parser.parse_args()
-    if args.battery_mwh is not None:
-        if not args.full or not math.isfinite(args.battery_mwh) or args.battery_mwh < 0.0:
-            parser.error("--battery-mwh requires --full and a finite, nonnegative value.")
     if args.output.exists():
         parser.error(f"{args.output} already exists. Choose a new filename.")
     try:
@@ -116,7 +112,7 @@ def main():
     except ImportError:
         parser.exit(1, "Install Bleak in this Python environment with python -m pip install bleak.\n")
     try:
-        asyncio.run(capture(args.output, args.full, args.battery_mwh))
+        asyncio.run(capture(args.output, args.full))
     except KeyboardInterrupt:
         pass
     except (BleakError, OSError, RuntimeError) as error:
