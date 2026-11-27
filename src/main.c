@@ -1,5 +1,3 @@
-/* SPDX-License-Identifier: Apache-2.0 */
-
 /*
  * TEG energy scheduler for the XIAO nRF52840: harvester-powered sensors.
  *
@@ -28,6 +26,9 @@
  *            rest, voltage dividers, the LTC3108 itself, capacitor leakage),
  *   E_event  the extra energy of one round of sensor readings,
  *   f        the event rate: readings per second, f = 1 / interval.
+ *   This equation is to give a sense of the system's energy balance. The code
+ *   never uses P_harvest, P_idle or E_event: the controller only compares the
+ *   measured capacitor energy with the target, and feedback does the rest.
  *   The goal is net power zero: spend exactly what is harvested. The controller
  *   does that by holding the capacitor at the energy it had at the start:
  *   - more energy than the target -> raise f (measure more often),
@@ -37,16 +38,16 @@
  *   is proportional to the rate, so the same gains behave the same at 1 s or 20 s.
  */
 
-#include <errno.h>
-#include <math.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <zephyr/drivers/adc.h>
-#include <zephyr/drivers/i2c.h>
-#include <zephyr/drivers/uart.h>
-#include <zephyr/kernel.h>
+#include <errno.h> //contains named error codes. used in status column
+#include <math.h> // math functions. used: NAN for no reading, isfinite(), fmin(), fmax()
+#include <stdbool.h> //bool types
+#include <stdio.h> // provides print functions
+#include <zephyr/drivers/adc.h> // XIAO's built'in ADC function
+#include <zephyr/drivers/i2c.h> // send and receive bytes on I2C bus
+#include <zephyr/drivers/uart.h> // check if there is a USB plugged in
+#include <zephyr/kernel.h> // uptime, sleep time, check if device is ready, etc
 
-#include "ble_output.h"
+#include "ble_output.h" // 3 bluetooth functions for start, send, and check for requests
 
 /* ====================================================================================
  * Settings you change between experiments
@@ -59,40 +60,70 @@
 
 /* Number of SHT40 readings averaged per event. More readings give smoother data and
  * cost more harvested energy per event. */
-#define SHT_READS_PER_EVENT 1
+#define SHT_READS_PER_EVENT 1 //read_environment() loops this many times
 
 /* Storage capacitor on VSTORE, in farads. Stored energy E = 1/2 * C * V^2. */
 #define CAPACITANCE_F 0.1
 
 /* Target energy = ENERGY_TARGET_FRACTION * (capacitor energy at the first reading).
  * 1.0 holds the starting level, which means net power zero. Use a value below 1.0
- * only for a step test.
+ * only for a step test. 
+ *    -> Say you set 0.8. The target becomes 80% of the starting energy, 
+ * 		so at the first reading the setpoint jumps down.
+ * 		can use this to check response time and gain settings.
+ * 		also 0.8 might be too big, bc total energy stored in the current CAP is 1.35J at max,
+ * 		and 80% of it requires about 48min to drain it to 80% with TEG disconnected 
+ * 		before any refill happens. if try, try 0.99.
  * Start each run with VSTORE below about 5 V: near 5.2 V the LTC3108 stops
  * charging the capacitor, so extra harvest is thrown away and cannot be seen. */
 #define ENERGY_TARGET_FRACTION 1.0
 
 /* The raw energy reading wobbles by about 1 mJ from ADC noise, more than one event
  * (tens of uJ). The controller therefore uses a smoothed energy: a running average
- * with this time constant, in seconds. The raw energy is still logged. */
+ * with this time constant, in seconds. The raw energy is still logged. 
+ * 		an example to understand this:
+ * 			cap_energy_J:       1.0120  1.0105  1.0131  1.0098  ...   (jumps by ~1 mJ)
+ * 			cap_energy_filt_J:  1.0120  1.0119  1.0120  1.0119  ...   (barely moves)
+ * 		and ENERGY_FILTER_S is how far back the new reading counts to calculate an average.
+ * 		every older reading still counts, but its weight shrinks by a factor of e for evey 10s.
+ * */
 #define ENERGY_FILTER_S 10.0
 
 /* PID gains. The controller output is an event rate in Hz:
  *     error = smoothed energy - target                 (J; positive = surplus)
  *     rate  = RATE_BIAS_HZ + Kp * error + Ki * (sum of error * dt) + Kd * dE/dt
  * Units: Kp in Hz/J, Ki in Hz/(J*s), Kd in Hz/W.
+ * 
+ * an example to get some intuition:
+ * 		Say the capacitor is 1 mJ above target. or 0.001J.
+ * 		The P term adds 500 × 0.001 = 0.5 Hz of extra readings.
+ * 		Those cost 0.5 × 20 µJ = 10 µW extra. we assume roughly each event takes 20µJ.
+ * 		At 10 µW, spending that 1 mJ takes 1 mJ / 10 µW = 100 s. That's tau.
+ * then we run experiments to measure E_event, 
+ * and plug it in for the equation below to get actual Kp and Ki
  *
  * Choosing them once E_event (J per event) is measured:
  *   - With P only, the error shrinks with time constant tau = 1 / (E_event * Kp).
  *     For tau of about 100 s:  Kp = 1 / (E_event * 100).
+ * 		-> *100 is to react slower than noise
+ * 
  *   - To settle without overshoot:  Ki = E_event * Kp^2 / 4.
+ * 		-> / 4 is to make the CAP energy don't overshoot relative to target
+ * 		-> / 4 is like critically damped
+ * 		-> P is like damping and I is like the spring
+ * 
  * The values below assume E_event = 20 uJ, an estimate until it is measured:
  *   Kp = 1 / (20e-6 * 100) = 500;  Ki = 20e-6 * 500^2 / 4 = 1.25, rounded to 1.0.
+ * 
  * Keep Kd = 0 at first: the energy slope is noisy. */
 #define PID_KP 500.0
 #define PID_KI 1.0
 #define PID_KD 0.0
 
-/* The rate used when the error is zero and the integral is empty: one event every 2 s. */
+/* The rate used when the error is zero and the integral is empty: one event every 2 s. 
+* rate = RATE_BIAS_HZ + P + I + D, so if PID adds to 0, this is the rate the system runs on
+* ideally this is the erngy-neutral rate after experiments
+*/
 #define RATE_BIAS_HZ 0.5
 
 /* Fastest and slowest allowed cycle, in seconds. One cycle spends about 0.25 s
@@ -100,7 +131,8 @@
 #define EVENT_INTERVAL_MIN_S 0.5
 #define EVENT_INTERVAL_MAX_S 30.0
 
-/* Smoothing time constant, in seconds, for the logged net power (dE/dt). */
+/* Smoothing time constant, in seconds, for the logged net power (dE/dt). 
+this only matters if the kd is not zero.*/
 #define NET_POWER_FILTER_S 30.0
 
 /* ====================================================================================
